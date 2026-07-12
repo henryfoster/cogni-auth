@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://esm.sh; connect-src https://cqgmdbpgpvtircxwixpm.supabase.co; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'self'">
+  <title>Authorization</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f4f4f3; color: #191918; }
+    main { width: min(420px, calc(100% - 32px)); padding: 28px; background: #fff; border: 1px solid #ddd; border-radius: 12px; box-sizing: border-box; }
+    h1 { margin: 0 0 18px; font-size: 22px; }
+    p { line-height: 1.45; }
+    label { display: block; margin: 14px 0 5px; font-size: 14px; }
+    input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #bbb; border-radius: 7px; font: inherit; }
+    button { padding: 10px 15px; border: 0; border-radius: 7px; font: inherit; cursor: pointer; background: #222; color: #fff; }
+    button.secondary { background: #e8e8e6; color: #222; }
+    button:disabled { cursor: wait; opacity: .65; }
+    .actions { display: flex; gap: 9px; margin-top: 20px; }
+    .muted { color: #666; font-size: 14px; }
+    .error { color: #b42318; white-space: pre-wrap; }
+    [hidden] { display: none !important; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #151515; color: #eee; }
+      main { background: #202020; border-color: #444; }
+      input { background: #181818; color: #eee; border-color: #555; }
+      button { background: #eee; color: #111; }
+      button.secondary { background: #3a3a3a; color: #eee; }
+      .muted { color: #aaa; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section id="loading"><p>Loading…</p></section>
+    <section id="login" hidden>
+      <h1>Sign in</h1>
+      <form id="login-form">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" required>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <div class="actions"><button type="submit">Sign in</button></div>
+      </form>
+    </section>
+    <section id="consent" hidden>
+      <h1>Authorize access</h1>
+      <p><strong id="client-name"></strong> is requesting access.</p>
+      <p id="scopes" class="muted"></p>
+      <div class="actions">
+        <button id="approve" type="button">Approve</button>
+        <button id="deny" class="secondary" type="button">Deny</button>
+      </div>
+    </section>
+    <p id="error" class="error" hidden></p>
+  </main>
+  <script type="module">
+    import { createClient } from "https://esm.sh/@supabase/supabase-js@2.110.2";
+
+    const client = createClient(
+      "https://cqgmdbpgpvtircxwixpm.supabase.co",
+      "sb_publishable_l2hVWrn3iDInNwHvlLSHbw_b8xyXRtE",
+      { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } },
+    );
+    const authorizationId = new URLSearchParams(location.search).get("authorization_id");
+    const loading = document.querySelector("#loading");
+    const login = document.querySelector("#login");
+    const consent = document.querySelector("#consent");
+    const errorNode = document.querySelector("#error");
+
+    function show(node) {
+      loading.hidden = true;
+      login.hidden = true;
+      consent.hidden = true;
+      node.hidden = false;
+    }
+
+    function fail(message) {
+      loading.hidden = true;
+      errorNode.textContent = message;
+      errorNode.hidden = false;
+    }
+
+    function busy(value) {
+      document.querySelectorAll("button").forEach((button) => button.disabled = value);
+    }
+
+    async function loadAuthorization() {
+      errorNode.hidden = true;
+      if (!authorizationId) return fail("Missing authorization request.");
+
+      const { data: { user } } = await client.auth.getUser();
+      if (!user) return show(login);
+
+      const { data, error } = await client.auth.oauth.getAuthorizationDetails(authorizationId);
+      if (error) return fail(error.message);
+      if (!("authorization_id" in data)) return location.assign(data.redirect_url);
+
+      document.querySelector("#client-name").textContent = data.client?.name || "An application";
+      document.querySelector("#scopes").textContent = data.scope
+        ? "Requested permissions: " + data.scope
+        : "";
+      show(consent);
+    }
+
+    document.querySelector("#login-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      busy(true);
+      const form = new FormData(event.currentTarget);
+      const { error } = await client.auth.signInWithPassword({
+        email: String(form.get("email")),
+        password: String(form.get("password")),
+      });
+      busy(false);
+      if (error) return fail(error.message);
+      await loadAuthorization();
+    });
+
+    document.querySelector("#approve").addEventListener("click", async () => {
+      busy(true);
+      const { data, error } = await client.auth.oauth.approveAuthorization(authorizationId);
+      if (error) { busy(false); return fail(error.message); }
+      location.assign(data.redirect_url);
+    });
+
+    document.querySelector("#deny").addEventListener("click", async () => {
+      busy(true);
+      const { data, error } = await client.auth.oauth.denyAuthorization(authorizationId);
+      if (error) { busy(false); return fail(error.message); }
+      location.assign(data.redirect_url);
+    });
+
+    await loadAuthorization();
+  </script>
+</body>
+</html>
